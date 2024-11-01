@@ -1,0 +1,473 @@
+<!doctype html>
+<html lang="en-us">
+  <head>
+    <!-- Global site tag (gtag.js) - Google Analytics -->
+    <script async src="https://www.googletagmanager.com/gtag/js?id=UA-136416307-1"></script>
+    <script>
+      window.dataLayer = window.dataLayer || [];
+      function gtag(){dataLayer.push(arguments);}
+      gtag('js', new Date());
+
+      gtag('config', 'UA-136416307-1');
+    </script>
+
+    <meta charset="utf-8">
+    <meta http-equiv="Content-Type" content="text/html; charset=utf-8">
+    <meta http-equiv="cache-control" content="max-age=0" />
+    <meta http-equiv="cache-control" content="no-cache" />
+    <meta http-equiv="expires" content="0" />
+    <meta http-equiv="expires" content="Tue, 01 Jan 1980 1:00:00 GMT" />
+    <meta http-equiv="pragma" content="no-cache" />
+    <title>Path of Building Web</title>
+    <link rel="stylesheet" type="text/css" href="GITVERSION/style.css">
+  </head>
+  <body id="body">
+    <div id="loading">
+      <h1>Loading<span class="otherfont">...</span></h1><br>
+      <br>
+      Path of Building is Copyright (c) David Gowor<br><br>
+      pob.party is not affiliated with Path of Building or Path of Exile developers in any way, shape, or form.<br>
+      <br><br>
+      <span id="custom-status"></span>
+      <span id="loading-status"></span>
+      <div id="copyright">Version: GITBRANCH/GITSHORTVER</div>
+    </div>
+
+    <canvas id="glCanvas" width="640" height="480"></canvas>
+
+    <canvas id="textCanvas" style="display:none"></canvas>
+
+    <div id="debug" style="display:none">
+    <div id="debug-contents" onclick="document.getElementById('debug').style.display='none';return false;"></div>
+    <button onclick='_profiler_start()';>Profiler start</button> <button onclick='_profiler_stop();'>Profiler stop</button>
+    </div>
+
+    <div id="overlay" style="display:none" onclick="overlay_close();">
+      <div id="overlay-inside" onclick="event.stopPropagation();">
+        <h2>Path of Building Web</h2>
+        <br>
+        <a href="#" class="btn" onclick="overlay_share_build();return false">Share current build</a><br>
+        <a href="/versions.html" target="_blank" class="btn">Old skill trees</a><br>
+        <!--
+        <a href="#" class="btn">Data manager</a><br>
+        -->
+        <br>
+        <small>Web Version: GITBRANCH/GITSHORTVER</small>
+        <a href="#" class="btn close" onclick="overlay_close(); return false">X</a>
+      </div>
+    </div>
+
+    <script src="GITVERSION/static/webfont.js"></script>
+
+    <script src="GITVERSION/assets.js"></script>
+    <script src="GITVERSION/draw.js"></script>
+    <script src="GITVERSION/overlay.js"></script>
+
+<script id="shader-fs" type="x-shader/x-fragment">
+precision mediump float;
+ 
+varying vec2 v_texcoord;
+varying float v_color;
+ 
+uniform sampler2D u_texture;
+uniform sampler2D u_palette;
+ 
+void main() {
+   gl_FragColor = texture2D(u_texture, v_texcoord) * texture2D(u_palette, vec2((v_color + 0.5) / 256.0, 0.5));
+}
+</script>
+
+<script id="shader-vs" type="x-shader/x-vertex">
+attribute vec4 a_position;
+attribute vec2 a_texcoord;
+attribute float a_color;
+ 
+uniform mat4 u_matrix;
+ 
+varying vec2 v_texcoord;
+varying float v_color;
+
+void main() {
+   gl_Position = u_matrix * a_position;
+   v_texcoord = a_texcoord;
+   v_color = a_color;
+}
+</script>
+
+
+<script>
+var index = window.location.search.indexOf("?loadURL=");
+var loadURL = false;
+if (index != -1) {
+  loadURL = window.location.search.substring(index + 9);
+  history.replaceState({}, "Path of Building Web", window.location.pathname);
+  document.getElementById("custom-status").innerHTML = "Loading a shared build, this will take a little longer...<br><br>";
+}
+
+function initWebGL(canvas) {
+  gl = null;
+  
+  // Try to grab the standard context. If it fails, fallback to experimental.
+  gl = canvas.getContext('webgl2', {alpha: false});
+  // TODO: we might want to support webgl so it works on Edge and Safari, the only issue appears to be non-power-of-two textures
+  
+  // If we don't have a GL context, give up now
+  if (!gl) {
+    alert('Unable to initialize WebGL 2. Your browser may not support it.');
+  }
+  
+  return gl;
+}
+
+function start() {
+  var canvas = document.getElementById('glCanvas');
+
+  // Initialize the GL context
+  gl = initWebGL(canvas);
+  
+  // Only continue if WebGL is available and working
+  if (!gl) {
+    return;
+  }
+
+  gl.clearColor(0.0, 0.0, 0.0, 1.0);
+  // gl.disable(gl.ALPHA_TEST);
+  gl.enable(gl.BLEND);
+  gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+  gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+}
+
+function getShader(gl, id, type) {
+  var shaderScript, theSource, currentChild, shader;
+  
+  shaderScript = document.getElementById(id);
+  
+  if (!shaderScript) {
+    return null;
+  }
+  
+  theSource = shaderScript.text;
+  if (!type) {
+    if (shaderScript.type == 'x-shader/x-fragment') {
+      type = gl.FRAGMENT_SHADER;
+    } else if (shaderScript.type == 'x-shader/x-vertex') {
+      type = gl.VERTEX_SHADER;
+    } else {
+      // Unknown shader type
+      return null;
+    }
+  }
+  shader = gl.createShader(type);
+  gl.shaderSource(shader, theSource);
+    
+  // Compile the shader program
+  gl.compileShader(shader);  
+    
+  // See if it compiled successfully
+  if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {  
+      console.log('An error occurred compiling the shaders: ' + gl.getShaderInfoLog(shader));  
+      gl.deleteShader(shader);
+      return null;  
+  }
+    
+  return shader;
+}
+
+function initShaders() {
+  var fragmentShader = getShader(gl, 'shader-fs');
+  var vertexShader = getShader(gl, 'shader-vs');
+  
+  // Create the shader program
+  
+  shaderProgram = gl.createProgram();
+  program = shaderProgram;
+  gl.attachShader(shaderProgram, vertexShader);
+  gl.attachShader(shaderProgram, fragmentShader);
+  gl.linkProgram(shaderProgram);
+  
+  // If creating the shader program failed, alert
+  
+  if (!gl.getProgramParameter(shaderProgram, gl.LINK_STATUS)) {
+    console.log('Unable to initialize the shader program: ' + gl.getProgramInfoLog(shaderProgram));
+  }
+  
+  vertexPositionAttribute = gl.getAttribLocation(shaderProgram, 'a_position');
+  gl.enableVertexAttribArray(vertexPositionAttribute);
+}
+
+m4 = {
+  orthographic: function(left, right, bottom, top, near, far) {
+    return [
+      2 / (right - left), 0, 0, 0,
+      0, 2 / (top - bottom), 0, 0,
+      0, 0, 2 / (near - far), 0,
+ 
+      (left + right) / (left - right),
+      (bottom + top) / (bottom - top),
+      (near + far) / (near - far),
+      1,
+    ];
+  }
+}
+
+function initBuffer() {
+  largeBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, largeBuffer);
+  gl.bufferData(gl.ARRAY_BUFFER, 4 * 1024 * 1024, gl.DYNAMIC_DRAW); // TODO: dynamic size?
+}
+
+function resetBuffer() {
+  gl.bufferOffset = 0;
+}
+
+var bufByLen = {
+  4: new Float32Array(4),
+  8: new Float32Array(8),
+  16: new Float32Array(16),
+}
+
+function writeBuffer(data) {
+  if (!bufByLen.hasOwnProperty(data.length))
+    throw "writeBuffer error, need " + data.length;
+  var tmpArr = bufByLen[data.length];
+  for (var i = 0; i < data.length; ++i)
+    tmpArr[i] = data[i];
+  gl.bufferSubData(gl.ARRAY_BUFFER, gl.bufferOffset, tmpArr);
+  var old = gl.bufferOffset;
+  gl.bufferOffset += tmpArr.byteLength;
+  return old;
+}
+
+var bufByLenByte = {
+  4: new Uint8Array(4),
+};
+
+function writeBufferByte(data) {
+  if (!bufByLenByte.hasOwnProperty(data.length))
+    throw "writeBuffer error, need " + data.length;
+  var tmpArr = bufByLenByte[data.length];
+  for (var i = 0; i < data.length; ++i)
+    tmpArr[i] = data[i];
+  gl.bufferSubData(gl.ARRAY_BUFFER, gl.bufferOffset, tmpArr);
+  var old = gl.bufferOffset;
+  gl.bufferOffset += tmpArr.byteLength;
+  return old;
+}
+
+function resizeCanvas() {
+  var width = window.innerWidth;
+  var height = window.innerHeight;
+
+  glCanvas.width = width;
+  glCanvas.height = height;
+
+  gl.viewport(0, 0, width, height);
+
+  matrix = m4.orthographic(0, gl.canvas.width, gl.canvas.height, 0, -1, 1);
+}
+
+CURRENT_VERSION = "@CURRENT_VERSION@";
+
+start();
+initShaders();
+
+initBuffer();
+resetBuffer();
+
+// look up where the vertex data needs to go.
+positionLocation = gl.getAttribLocation(program, "a_position");
+texcoordLocation = gl.getAttribLocation(program, "a_texcoord");
+colorLocation1 = gl.getAttribLocation(program, "a_color");
+
+// lookup uniforms
+matrixLocation = gl.getUniformLocation(program, "u_matrix");
+textureLocation = gl.getUniformLocation(program, "u_texture");
+paletteLocation = gl.getUniformLocation(program, "u_palette");
+
+glCanvas = document.getElementById("glCanvas");
+
+function load_pob() {
+  var pob = document.createElement('script');
+  pob.setAttribute('src','pob-GITVERSION.js');
+  document.head.appendChild(pob);
+}
+
+function load_url() {
+  var xhttp = new XMLHttpRequest();
+  xhttp.onreadystatechange = function() {
+      if (this.readyState == 4 && this.status == 200) {
+        var obj = JSON.parse(this.responseText);
+        Module.arguments = [obj.data];
+        load_pob();
+      }
+  };
+  xhttp.open("GET", "/kv/get/" + loadURL, true);
+  xhttp.send();
+}
+
+function start_pob() {
+  if (loadURL) {
+    load_url();
+  } else {
+    load_pob();
+  }
+}
+
+function prepare_sprites() {
+  for (var filepath in SPRITES) {
+    var base_index = SPRITES[filepath][0];
+    var base = TEXTURES[base_index];
+    SPRITES[filepath][0] = GL_TEXTURES[base].texture;
+  }
+}
+
+buffers = [];
+image_handles = [];
+
+GL_TEXTURES = {};
+images_loaded = 0;
+function load_textures() {
+  for (var i = 0; i < TEXTURES.length; ++i) {
+    (function(url) {
+      var x = {};
+      x.url = url;
+      x.loaded = false;
+      x.img = new Image();
+      x.img.addEventListener('load', function() {
+        x.loaded = true;
+
+        var tex = gl.createTexture();
+        gl.bindTexture(gl.TEXTURE_2D, tex);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+        gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, x.img);
+        x.texture = tex;
+
+        ++images_loaded;
+        if (images_loaded == TEXTURES.length) {
+          prepare_sprites();
+          start_pob();
+        }
+      });
+
+      var xmlHTTP = new XMLHttpRequest();
+      xmlHTTP.open('GET', "GITVERSION/" + x.url, true);
+      xmlHTTP.responseType = 'arraybuffer';
+      xmlHTTP.onload = function(e) {
+        var blob = new Blob([this.response]);
+        x.img.src = window.URL.createObjectURL(blob);
+      };
+      xmlHTTP.onprogress = function(e) {
+        Module.setStatus('Downloading texture ' + (images_loaded+1) + ' / ' + TEXTURES.length + '... (' + e.loaded + ' / ' + e.total + ')');
+      };
+      xmlHTTP.send();
+
+      GL_TEXTURES[x.url] = x;
+    })(TEXTURES[i]);
+  }
+}
+
+
+window.addEventListener('resize', resizeCanvas, false);
+resizeCanvas();
+
+whiteTexture = gl.createTexture();
+gl.bindTexture(gl.TEXTURE_2D, whiteTexture);
+var whitePixel = new Uint8Array([255, 255, 255, 255]);
+gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, whitePixel);
+
+</script>
+
+    <script type='text/javascript'>
+      var args = [];
+      var index = window.location.search.indexOf("?load=");
+      if (index != -1) {
+        args = [window.location.search.substring(index + 6)];
+      }
+
+      var Module = {
+        arguments: args,
+        preRun: [function() {
+          FS.mkdir('/data');
+          FS.mount(IDBFS, {}, '/data');
+          FS.syncfs(true, function(err){});
+        }],
+        postRun: [],
+        print: (function() {
+          return function(text) {
+            if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+            console.log(text);
+          };
+        })(),
+        printErr: function(text) {
+          if (arguments.length > 1) text = Array.prototype.slice.call(arguments).join(' ');
+          if (0) { // XXX disabled for safety typeof dump == 'function') {
+            dump(text + '\n'); // fast, straight to the real console
+          } else {
+            console.error(text);
+          }
+        },
+        canvas: (function() {
+          var canvas = document.getElementById('glCanvas');
+
+          // As a default initial behavior, pop up an alert when webgl context is lost. To make your
+          // application robust, you may want to override this behavior before shipping!
+          // See http://www.khronos.org/registry/webgl/specs/latest/1.0/#5.15.2
+          canvas.addEventListener("webglcontextlost", function(e) { alert('WebGL context lost. You will need to reload the page.'); e.preventDefault(); }, false);
+
+          return canvas;
+        })(),
+        setStatus: function(text) {
+          var el = document.getElementById("loading-status");
+          if (el)
+            el.innerHTML = text;
+        },
+        totalDependencies: 0,
+        monitorRunDependencies: function(left) {
+          this.totalDependencies = Math.max(this.totalDependencies, left);
+          Module.setStatus(left ? 'Preparing... (' + (this.totalDependencies-left) + '/' + this.totalDependencies + ')' : 'All downloads complete.');
+        }
+      };
+      Module.setStatus('Downloading...');
+      window.onerror = function() {
+        Module.setStatus('Exception thrown, see JavaScript console');
+        Module.setStatus = function(text) {
+          if (text) Module.printErr('[post-exception status] ' + text);
+        };
+      };
+    </script>
+
+    <script>
+      document.querySelector("body").addEventListener('paste', function(event) {
+        var data = event.clipboardData.getData("Text");
+        if (data.length == 0)
+          return;
+        _inject_paste(allocate(intArrayFromString(data), 'i8', ALLOC_NORMAL));
+      });
+
+      var debug = document.getElementById("debug");
+      document.onkeydown = function(event) {
+        if (event.code == "F12")
+          debug.style.display = "block";
+      }
+      if (window.location.hostname == "pob.test" || window.location.hostname == "127.0.0.1")
+        debug.style.display = "block";
+    </script>
+
+<script>
+  WebFontConfig = {
+    custom: {
+      families: ['LiberationSans', 'BitstreamVeraSansMono'],
+      urls: ['GITVERSION/static/font.css']
+    },
+    active: function() {
+      load_textures();
+    }
+  };
+  WebFont.load(WebFontConfig);
+</script>
+
+
+    <!-- {{{ SCRIPT }}} can't remove - emscripten complains -->
+  </body>
+</html>
